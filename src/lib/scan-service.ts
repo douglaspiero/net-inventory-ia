@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { scanNetwork } from "@/lib/network/scanner";
 import { classifyDevice } from "@/lib/network/classify";
 import { findMatchingRule, getIpRules } from "@/lib/network/ip-rules";
+import { getIgnoredIps, isIgnoredIp } from "@/lib/network/ignored-ips";
 import { dedupeHostsByMac, hostnamesCompatible, normalizeMac } from "@/lib/device-identity";
 import { mergeDuplicateDevices } from "@/lib/device-merge";
 import type { Prisma } from "@prisma/client";
@@ -38,10 +39,13 @@ async function scanAndPersist(cidr: string): Promise<ScanResult> {
   const scanRun = await prisma.scanRun.create({ data: { cidr } });
 
   try {
-    const [scanned, allRules] = await Promise.all([
+    const [rawScanned, allRules, ignored] = await Promise.all([
       scanNetwork(cidr),
       getIpRules().catch(() => []),
+      getIgnoredIps().catch(() => []),
     ]);
+    // IPs ignorados (Configurações): não entram no inventário nem geram eventos.
+    const scanned = rawScanned.filter((h) => !isIgnoredIp(h.ip, ignored));
     const ipRules = allRules.filter((r) => r.enabled);
     const now = new Date();
     const seenDeviceIds = new Set<string>();
@@ -164,6 +168,8 @@ async function scanAndPersist(cidr: string): Promise<ScanResult> {
     });
 
     for (const device of offlineCandidates) {
+      // Ainda no inventário mas num IP ignorado: fica como está, sem virar offline a cada scan.
+      if (isIgnoredIp(device.ip, ignored)) continue;
       await prisma.device.update({ where: { id: device.id }, data: { status: "OFFLINE" } });
       await prisma.deviceEvent.create({
         data: { deviceId: device.id, type: "WENT_OFFLINE", message: "Dispositivo não respondeu ao scan" },

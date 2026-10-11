@@ -10,6 +10,7 @@ import { NotificationSettings } from "@/components/notification-settings";
 import { EmailAlertsCard } from "@/components/email-alerts-card";
 import { AiSettingsCard } from "@/components/ai/ai-settings-card";
 import { IpRulesCard } from "@/components/ip-rules-card";
+import { IgnoredIpsCard } from "@/components/ignored-ips-card";
 import { useCan } from "@/components/auth/user-provider";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -145,6 +146,8 @@ export function SettingsForm() {
       </Card>
 
       <IpRulesCard />
+
+      <IgnoredIpsCard />
 
       <NotificationSettings />
 
