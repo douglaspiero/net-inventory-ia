@@ -19,8 +19,9 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 
-const VERSION_OPTIONS = { "2c": "v2c", "1": "v1", "3": "v3 (usuário e autenticação)" } as const;
+const VERSION_OPTIONS = { "2c": "v2c", "1": "v1", "3": "v3 (autenticação e privacidade opcionais)" } as const;
 const AUTH_OPTIONS = { md5: "MD5", sha: "SHA" } as const;
+const PRIVACY_OPTIONS = { none: "Sem privacidade", des: "DES", aes: "AES" } as const;
 type Version = EquipmentSnmpVersion;
 
 /** Executa uma action que devolve ToolResult e transforma { ok: false } em erro para o useMutation. */
@@ -65,9 +66,11 @@ function EquipmentForm({ editing, onClose, onSaved }: { editing: EquipmentRow | 
   const [snmpUsername, setSnmpUsername] = useState("");
   const [snmpAuthPassword, setSnmpAuthPassword] = useState("");
   const [snmpAuthProtocol, setSnmpAuthProtocol] = useState<"md5" | "sha">(editing?.snmpAuthProtocol ?? "md5");
+  const [snmpPrivPassword, setSnmpPrivPassword] = useState("");
+  const [snmpPrivProtocol, setSnmpPrivProtocol] = useState<"none" | "des" | "aes">(editing?.snmpPrivProtocol ?? "none");
   const [notes, setNotes] = useState(editing?.notes ?? "");
 
-  const input = (): EquipmentInput => ({ name, ip, community, snmpVersion: version, snmpUsername, snmpAuthPassword, snmpAuthProtocol, notes });
+  const input = (): EquipmentInput => ({ name, ip, community, snmpVersion: version, snmpUsername, snmpAuthPassword, snmpAuthProtocol, snmpPrivPassword, snmpPrivProtocol, notes });
 
   const save = useMutation({
     mutationFn: () => unwrap(editing ? updateEquipment(editing.id, input()) : createEquipment(input())),
@@ -81,7 +84,7 @@ function EquipmentForm({ editing, onClose, onSaved }: { editing: EquipmentRow | 
   });
 
   const test = useMutation({
-    mutationFn: () => unwrap(testEquipmentConnection({ ip, community, snmpVersion: version, snmpUsername, snmpAuthPassword, snmpAuthProtocol, id: editing?.id })),
+    mutationFn: () => unwrap(testEquipmentConnection({ ip, community, snmpVersion: version, snmpUsername, snmpAuthPassword, snmpAuthProtocol, snmpPrivPassword, snmpPrivProtocol, id: editing?.id })),
     onSuccess: (sys) => {
       // Sugere o nome anunciado pelo próprio equipamento quando o campo ainda está vazio.
       if (!name.trim() && sys.sysName) setName(sys.sysName);
@@ -136,7 +139,7 @@ function EquipmentForm({ editing, onClose, onSaved }: { editing: EquipmentRow | 
         </div>
         {version === "3" ? (
           <div className="flex flex-col gap-3 rounded-lg border p-3">
-            <p className="text-xs text-muted-foreground">SNMPv3 com autenticação (authNoPriv); o conteúdo da comunicação não é criptografado. Use esta opção quando o agente estiver configurado sem privacidade.</p>
+            <p className="text-xs text-muted-foreground">Configure a autenticação e, quando o equipamento exigir, a privacidade (authPriv). Use os algoritmos e senhas definidos no próprio equipamento.</p>
             <div className="grid gap-3 sm:grid-cols-2">
               <Field label="Usuário SNMPv3" htmlFor="eq-snmp-user">
                 <Input id="eq-snmp-user" value={snmpUsername} onChange={(e) => { setSnmpUsername(e.target.value); test.reset(); }} placeholder={editing?.credentialsConfigured ? "Configurado (vazio mantém)" : "admin"} autoComplete="off" />
@@ -148,6 +151,16 @@ function EquipmentForm({ editing, onClose, onSaved }: { editing: EquipmentRow | 
             <Field label={editing?.credentialsConfigured ? "Senha de autenticação (vazio mantém a atual)" : "Senha de autenticação"} htmlFor="eq-snmp-auth-password">
               <Input id="eq-snmp-auth-password" type="password" value={snmpAuthPassword} onChange={(e) => { setSnmpAuthPassword(e.target.value); test.reset(); }} placeholder={editing?.credentialsConfigured ? "••••••••" : "Mínimo 8 caracteres"} autoComplete="new-password" className="font-mono" required={!editing || !editing.credentialsConfigured} />
             </Field>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="Privacidade" htmlFor="eq-snmp-privacy-protocol">
+                <SimpleSelect id="eq-snmp-privacy-protocol" value={snmpPrivProtocol} onChange={(v) => { setSnmpPrivProtocol(v as "none" | "des" | "aes"); test.reset(); }} options={PRIVACY_OPTIONS} className="w-full" />
+              </Field>
+              {snmpPrivProtocol !== "none" && (
+                <Field label={editing?.privacyConfigured ? "Senha de privacidade (vazio mantém a atual)" : "Senha de privacidade"} htmlFor="eq-snmp-privacy-password">
+                  <Input id="eq-snmp-privacy-password" type="password" value={snmpPrivPassword} onChange={(e) => { setSnmpPrivPassword(e.target.value); test.reset(); }} placeholder={editing?.privacyConfigured ? "••••••••" : "Mínimo 8 caracteres"} autoComplete="new-password" className="font-mono" required={!editing || !editing.privacyConfigured} />
+                </Field>
+              )}
+            </div>
           </div>
         ) : (
           <Field label={editing ? "Community SNMP (em branco = manter a atual)" : "Community SNMP"} htmlFor="eq-community">

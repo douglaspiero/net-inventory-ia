@@ -18,6 +18,8 @@ export interface EquipmentRow {
   snmpVersion: EquipmentSnmpVersion;
   credentialsConfigured: boolean;
   snmpAuthProtocol: "md5" | "sha" | null;
+  snmpPrivProtocol: "des" | "aes" | null;
+  privacyConfigured: boolean;
   notes: string | null;
   /** Leitura automática na página (minutos); null = desligada. */
   pollIntervalMinutes: number | null;
@@ -34,6 +36,8 @@ export interface EquipmentInput {
   snmpUsername: string;
   snmpAuthPassword: string;
   snmpAuthProtocol: string;
+  snmpPrivPassword: string;
+  snmpPrivProtocol: string;
   notes: string;
 }
 
@@ -56,7 +60,7 @@ export interface ConnectionTest {
 export type EquipmentSnmpVersion = SnmpVersion | "3";
 
 const VERSIONS: EquipmentSnmpVersion[] = ["2c", "1", "3"];
-const ROW_FIELDS = { id: true, name: true, ip: true, snmpVersion: true, snmpUsername: true, snmpAuthPassword: true, snmpAuthProtocol: true, notes: true, pollIntervalMinutes: true, createdAt: true, updatedAt: true } as const;
+const ROW_FIELDS = { id: true, name: true, ip: true, snmpVersion: true, snmpUsername: true, snmpAuthPassword: true, snmpAuthProtocol: true, snmpPrivPassword: true, snmpPrivProtocol: true, notes: true, pollIntervalMinutes: true, createdAt: true, updatedAt: true } as const;
 const HOSTNAME_RE = /^(?=.{1,253}$)[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*\.?$/;
 
 async function run<T>(fn: () => Promise<T>): Promise<ToolResult<T>> {
@@ -78,14 +82,16 @@ function assertVersion(v: string): EquipmentSnmpVersion {
   return v as EquipmentSnmpVersion;
 }
 
-function toRow(e: { snmpVersion: string; snmpUsername: string | null; snmpAuthPassword: string | null; snmpAuthProtocol: string | null } & Omit<EquipmentRow, "snmpVersion" | "credentialsConfigured" | "snmpAuthProtocol">): EquipmentRow {
-  const { snmpUsername, snmpAuthPassword, snmpAuthProtocol, ...safe } = e;
+function toRow(e: { snmpVersion: string; snmpUsername: string | null; snmpAuthPassword: string | null; snmpAuthProtocol: string | null; snmpPrivPassword: string | null; snmpPrivProtocol: string | null } & Omit<EquipmentRow, "snmpVersion" | "credentialsConfigured" | "snmpAuthProtocol" | "snmpPrivProtocol" | "privacyConfigured">): EquipmentRow {
+  const { snmpUsername, snmpAuthPassword, snmpAuthProtocol, snmpPrivPassword, snmpPrivProtocol, ...safe } = e;
   const credentialsConfigured = e.snmpVersion === "3" ? Boolean(snmpUsername && snmpAuthPassword) : true;
   return {
     ...safe,
     snmpVersion: VERSIONS.includes(e.snmpVersion as EquipmentSnmpVersion) ? e.snmpVersion as EquipmentSnmpVersion : "2c",
     credentialsConfigured,
     snmpAuthProtocol: snmpAuthProtocol === "md5" || snmpAuthProtocol === "sha" ? snmpAuthProtocol : null,
+    snmpPrivProtocol: snmpPrivProtocol === "des" || snmpPrivProtocol === "aes" ? snmpPrivProtocol : null,
+    privacyConfigured: Boolean(snmpPrivPassword && (snmpPrivProtocol === "des" || snmpPrivProtocol === "aes")),
   };
 }
 
@@ -105,16 +111,22 @@ function validate(input: EquipmentInput, requireCredentials: boolean) {
   const snmpUsername = input.snmpUsername.trim();
   const snmpAuthPassword = input.snmpAuthPassword.trim();
   const snmpAuthProtocol = input.snmpAuthProtocol === "sha" ? "sha" : input.snmpAuthProtocol === "md5" ? "md5" : "";
+  const snmpPrivPassword = input.snmpPrivPassword.trim();
+  const snmpPrivProtocol = input.snmpPrivProtocol === "none" ? "none" : input.snmpPrivProtocol === "des" || input.snmpPrivProtocol === "aes" ? input.snmpPrivProtocol : "";
   if (snmpVersion !== "3" && requireCredentials && !community) throw new Error("Informe a community SNMP.");
   if (snmpVersion === "3") {
     if (snmpUsername.length > 64) throw new Error("Nome de usuário SNMPv3 longo demais.");
     if (requireCredentials && (!snmpUsername || !snmpAuthPassword)) throw new Error("Informe o usuário e a senha de autenticação SNMPv3.");
     if (snmpAuthPassword && snmpAuthPassword.length < 8) throw new Error("A senha de autenticação SNMPv3 deve ter pelo menos 8 caracteres.");
     if (!snmpAuthProtocol) throw new Error("Escolha o algoritmo de autenticação SNMPv3.");
+    if (snmpPrivPassword && snmpPrivPassword.length < 8) throw new Error("A senha de privacidade SNMPv3 deve ter pelo menos 8 caracteres.");
+    if (snmpPrivProtocol === "none" && snmpPrivPassword) throw new Error("Remova a senha de privacidade ou selecione DES/AES.");
+    if (requireCredentials && (snmpPrivProtocol === "des" || snmpPrivProtocol === "aes") && !snmpPrivPassword) throw new Error("Informe a senha de privacidade SNMPv3.");
+    if (!snmpPrivProtocol && snmpPrivPassword) throw new Error("Escolha DES ou AES para usar a senha de privacidade SNMPv3.");
   }
   const notes = input.notes.trim();
   if (notes.length > 1000) throw new Error("Observações longas demais (máximo 1000 caracteres).");
-  return { name, ip: assertHost(input.ip), community, snmpVersion, snmpUsername, snmpAuthPassword, snmpAuthProtocol, notes: notes || null };
+  return { name, ip: assertHost(input.ip), community, snmpVersion, snmpUsername, snmpAuthPassword, snmpAuthProtocol, snmpPrivPassword, snmpPrivProtocol, notes: notes || null };
 }
 
 async function assertIpFree(ip: string, exceptId?: string) {
@@ -135,7 +147,7 @@ export async function createEquipment(input: EquipmentInput): Promise<ToolResult
     await requirePermission("inventory.edit");
     const data = validate(input, true);
     await assertIpFree(data.ip);
-    const { snmpUsername, snmpAuthPassword, snmpAuthProtocol, ...base } = data;
+    const { snmpUsername, snmpAuthPassword, snmpAuthProtocol, snmpPrivPassword, snmpPrivProtocol, ...base } = data;
     const row = await prisma.equipment.create({
       data: {
         ...base,
@@ -143,6 +155,8 @@ export async function createEquipment(input: EquipmentInput): Promise<ToolResult
         snmpUsername: data.snmpVersion === "3" ? encrypt(snmpUsername) : null,
         snmpAuthPassword: data.snmpVersion === "3" ? encrypt(snmpAuthPassword) : null,
         snmpAuthProtocol: data.snmpVersion === "3" ? snmpAuthProtocol : null,
+        snmpPrivPassword: data.snmpVersion === "3" && (snmpPrivProtocol === "des" || snmpPrivProtocol === "aes") ? encrypt(snmpPrivPassword) : null,
+        snmpPrivProtocol: data.snmpVersion === "3" && (snmpPrivProtocol === "des" || snmpPrivProtocol === "aes") ? snmpPrivProtocol : null,
       },
       select: ROW_FIELDS,
     });
@@ -158,11 +172,13 @@ export async function updateEquipment(id: string, input: EquipmentInput): Promis
     const data = validate(input, false);
     await assertIpFree(data.ip, id);
     const oldWasV3 = existing.snmpVersion === "3";
-    const { snmpUsername, snmpAuthPassword, snmpAuthProtocol, community, ...base } = data;
+    const { snmpUsername, snmpAuthPassword, snmpAuthProtocol, snmpPrivPassword, snmpPrivProtocol, community, ...base } = data;
     let encryptedCommunity: string | undefined;
     let encryptedUsername: string | null = null;
     let encryptedAuthPassword: string | null = null;
     let authProtocol: string | null = null;
+    let encryptedPrivPassword: string | null = null;
+    let privProtocol: string | null = null;
     if (data.snmpVersion === "3") {
       const username = snmpUsername || (oldWasV3 && existing.snmpUsername ? decrypt(existing.snmpUsername) ?? "" : "");
       const password = snmpAuthPassword || (oldWasV3 && existing.snmpAuthPassword ? decrypt(existing.snmpAuthPassword) ?? "" : "");
@@ -173,6 +189,13 @@ export async function updateEquipment(id: string, input: EquipmentInput): Promis
       encryptedUsername = encrypt(username);
       encryptedAuthPassword = snmpAuthPassword ? encrypt(snmpAuthPassword) : existing.snmpAuthPassword;
       authProtocol = protocol;
+      privProtocol = snmpPrivProtocol === "none" ? null : snmpPrivProtocol || (oldWasV3 ? existing.snmpPrivProtocol ?? "" : "") || null;
+      if (privProtocol) {
+        const password = snmpPrivPassword || (oldWasV3 && existing.snmpPrivPassword ? decrypt(existing.snmpPrivPassword) ?? "" : "");
+        if (!password) throw new Error("Informe a senha de privacidade SNMPv3.");
+        if (password.length < 8) throw new Error("A senha de privacidade SNMPv3 deve ter pelo menos 8 caracteres.");
+        encryptedPrivPassword = snmpPrivPassword ? encrypt(snmpPrivPassword) : existing.snmpPrivPassword;
+      }
     } else {
       if (community) encryptedCommunity = encrypt(community);
       else if (oldWasV3) throw new Error("Informe a community SNMP para mudar para v1/v2c.");
@@ -185,6 +208,8 @@ export async function updateEquipment(id: string, input: EquipmentInput): Promis
         snmpUsername: encryptedUsername,
         snmpAuthPassword: encryptedAuthPassword,
         snmpAuthProtocol: authProtocol,
+        snmpPrivPassword: encryptedPrivPassword,
+        snmpPrivProtocol: privProtocol,
       },
       select: ROW_FIELDS,
     });
@@ -223,7 +248,7 @@ export async function updateEquipmentPollInterval(id: string, minutes: number | 
  * Testa o acesso SNMP antes de salvar. Na edição, community em branco usa a já cadastrada (id).
  * Devolve sysName/sysDescr para o formulário sugerir o nome.
  */
-export async function testEquipmentConnection(input: { ip: string; community: string; snmpVersion: string; snmpUsername?: string; snmpAuthPassword?: string; snmpAuthProtocol?: string; id?: string }): Promise<ToolResult<ConnectionTest>> {
+export async function testEquipmentConnection(input: { ip: string; community: string; snmpVersion: string; snmpUsername?: string; snmpAuthPassword?: string; snmpAuthProtocol?: string; snmpPrivPassword?: string; snmpPrivProtocol?: string; id?: string }): Promise<ToolResult<ConnectionTest>> {
   return run(async () => {
     await requirePermission("network.operate");
     const host = assertHost(input.ip);
@@ -233,16 +258,24 @@ export async function testEquipmentConnection(input: { ip: string; community: st
       let username = input.snmpUsername?.trim() ?? "";
       let authPassword = input.snmpAuthPassword?.trim() ?? "";
       let authProtocol = input.snmpAuthProtocol === "sha" ? "sha" : input.snmpAuthProtocol === "md5" ? "md5" : "";
-      if ((!username || !authPassword || !authProtocol) && input.id) {
-        const stored = await prisma.equipment.findUnique({ where: { id: input.id }, select: { snmpVersion: true, snmpUsername: true, snmpAuthPassword: true, snmpAuthProtocol: true } });
+      let privacyPassword = input.snmpPrivPassword?.trim() ?? "";
+      const explicitlyNoPrivacy = input.snmpPrivProtocol === "none";
+      let privacyProtocol = input.snmpPrivProtocol === "des" || input.snmpPrivProtocol === "aes" ? input.snmpPrivProtocol : "";
+      if ((!username || !authPassword || !authProtocol || (!privacyPassword && !privacyProtocol)) && input.id) {
+        const stored = await prisma.equipment.findUnique({ where: { id: input.id }, select: { snmpVersion: true, snmpUsername: true, snmpAuthPassword: true, snmpAuthProtocol: true, snmpPrivPassword: true, snmpPrivProtocol: true } });
         if (stored?.snmpVersion === "3") {
           username ||= stored.snmpUsername ? decrypt(stored.snmpUsername) ?? "" : "";
           authPassword ||= stored.snmpAuthPassword ? decrypt(stored.snmpAuthPassword) ?? "" : "";
           authProtocol ||= stored.snmpAuthProtocol ?? "";
+          if (!explicitlyNoPrivacy) {
+            privacyPassword ||= stored.snmpPrivPassword ? decrypt(stored.snmpPrivPassword) ?? "" : "";
+            privacyProtocol ||= stored.snmpPrivProtocol ?? "";
+          }
         }
       }
       if (!username || !authPassword || (authProtocol !== "md5" && authProtocol !== "sha")) throw new Error("Informe o usuário, a senha de autenticação e o algoritmo SNMPv3.");
-      target = { host, version: "3", username, authPassword, authProtocol };
+      if ((privacyPassword && !privacyProtocol) || (privacyProtocol && !privacyPassword)) throw new Error("Para SNMPv3 com privacidade, informe o algoritmo e a senha de privacidade.");
+      target = { host, version: "3", username, authPassword, authProtocol, ...(privacyProtocol ? { privacyProtocol: privacyProtocol as "des" | "aes", privacyPassword } : {}) };
     } else {
       let community = input.community.trim();
       if (!community && input.id) {
@@ -277,6 +310,7 @@ export async function readEquipmentDetail(id: string): Promise<ToolResult<Equipm
           username: eq.snmpUsername ? decrypt(eq.snmpUsername) ?? "" : "",
           authPassword: eq.snmpAuthPassword ? decrypt(eq.snmpAuthPassword) ?? "" : "",
           authProtocol: eq.snmpAuthProtocol === "sha" ? "sha" : "md5",
+          ...(eq.snmpPrivProtocol && eq.snmpPrivPassword ? { privacyProtocol: eq.snmpPrivProtocol === "aes" ? "aes" as const : "des" as const, privacyPassword: decrypt(eq.snmpPrivPassword) ?? "" } : {}),
         }
       : { host: eq.ip, community: openCommunity(eq.community), version: eq.snmpVersion === "1" ? "1" : "2c" };
     if (target.version === "3" && (!target.username || !target.authPassword)) throw new Error("As credenciais SNMPv3 estão incompletas ou não puderam ser abertas. Edite o equipamento e informe-as novamente.");

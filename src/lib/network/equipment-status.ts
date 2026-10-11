@@ -150,8 +150,14 @@ export interface EquipmentStatus {
   fans: FanStatus[];
   psus: PsuStatus[];
   ports: PortStatus[];
-  printerSupplies: string[][];
+  printerSupplies: PrinterSupply[];
   readAt: string;
+}
+
+export interface PrinterSupply {
+  name: string;
+  description: string;
+  level: string;
 }
 
 type Rows = string[][];
@@ -221,7 +227,8 @@ export async function readEquipmentStatus(target: SnmpTarget): Promise<Equipment
 
   // Impressoras expõem principalmente system + Printer-MIB; não consultamos MIBs de chassi/switch nelas.
   if (/printer|laser|samsung.*m\s?-?4070/i.test(sysDescr ?? "")) {
-    const printerSupplies = (await snmpQuery(target, "printer").catch(() => ({ columns: [], rows: [] }))).rows;
+    const printerRows = (await snmpQuery(target, "printer").catch(() => ({ columns: [], rows: [] }))).rows;
+    const printerSupplies = printerRows.map(([name, description, level]) => ({ name, description, level }));
     return {
       sysName: scalar(OID_SYSNAME) ?? "—", sysDescr, sysLocation: scalar(OID_SYSLOC), uptime: scalar(OID_UPTIME) ?? "—",
       cpuPct: null, memPct: null, tempC: null, tempThresholdC: null, fans: [], psus: [], ports: [],
@@ -339,7 +346,7 @@ export async function readEquipmentStatus(target: SnmpTarget): Promise<Equipment
     };
   });
 
-  const printerSupplies: string[][] = [];
+  const printerSupplies: PrinterSupply[] = [];
 
   const cpu = scalar(OID_CPU);
   const mem = scalar(OID_MEM);

@@ -208,6 +208,8 @@ export interface SnmpV3Target {
   username: string;
   authPassword: string;
   authProtocol: "md5" | "sha";
+  privacyProtocol?: "des" | "aes";
+  privacyPassword?: string;
 }
 
 export type SnmpTarget = SnmpCommunityTarget | SnmpV3Target;
@@ -216,12 +218,7 @@ const TIMEOUT_MS = 2000;
 const RETRIES = 1;
 
 async function requestV3(target: SnmpV3Target, pduType: number, oids: string[]): Promise<VarBind[]> {
-  const user: snmpV3.User = {
-    name: target.username,
-    level: snmpV3.SecurityLevel.authNoPriv,
-    authProtocol: target.authProtocol === "md5" ? snmpV3.AuthProtocols.md5 : snmpV3.AuthProtocols.sha,
-    authKey: target.authPassword,
-  };
+  const user = createV3User(target);
   const session = snmpV3.createV3Session(target.host, user, { version: 3, timeout: TIMEOUT_MS, retries: RETRIES, transport: "udp4" });
   session.on("error", () => {});
   try {
@@ -245,6 +242,23 @@ async function requestV3(target: SnmpV3Target, pduType: number, oids: string[]):
   } finally {
     session.close();
   }
+}
+
+/** Monta o nível e os algoritmos de segurança do usuário SNMPv3. */
+export function createV3User(target: SnmpV3Target): snmpV3.User {
+  if (Boolean(target.privacyProtocol) !== Boolean(target.privacyPassword)) {
+    throw new Error("A privacidade SNMPv3 requer algoritmo e senha de privacidade.");
+  }
+  return {
+    name: target.username,
+    level: target.privacyProtocol ? snmpV3.SecurityLevel.authPriv : snmpV3.SecurityLevel.authNoPriv,
+    authProtocol: target.authProtocol === "md5" ? snmpV3.AuthProtocols.md5 : snmpV3.AuthProtocols.sha,
+    authKey: target.authPassword,
+    ...(target.privacyProtocol && target.privacyPassword ? {
+      privProtocol: target.privacyProtocol === "des" ? snmpV3.PrivProtocols.des : snmpV3.PrivProtocols.aes,
+      privKey: target.privacyPassword,
+    } : {}),
+  };
 }
 
 async function request(target: SnmpTarget, pduType: number, oids: string[]): Promise<VarBind[]> {
@@ -339,6 +353,25 @@ export interface SnmpTable {
   rows: string[][];
 }
 
+/** Traduz descrições comuns da Printer-MIB sem expor números de série do fabricante. */
+export function formatPrinterSupply(rawName: string, level: string): [name: string, description: string, level: string] {
+  const cleaned = rawName.replace(/\s*(?:S\/N|Serial(?:\s+Number)?)\s*:\s*[^,;]+/gi, "").replace(/\s+/g, " ").trim();
+  const normalized = cleaned.toLowerCase();
+  const known: [RegExp, string, string][] = [
+    [/black toner cartridge|toner cartridge.*black|cartucho.*toner.*preto/, "Toner preto", "Consumível de impressão; indica a quantidade estimada de toner restante."],
+    [/^fuser$|fuser unit/, "Fusor", "Peça de manutenção que fixa o toner ao papel."],
+    [/^t2 roller$/, "Rolo T2", "Peça de alimentação e transporte do papel."],
+    [/tray\s*1.*retard roller/, "Rolo separador — bandeja 1", "Separa as folhas para evitar que mais de uma seja puxada por vez."],
+    [/tray\s*1.*roller/, "Rolo de alimentação — bandeja 1", "Puxa o papel da bandeja principal para dentro da impressora."],
+    [/mp.*retard roller|multi.?purpose.*retard roller/, "Rolo separador — bandeja multiuso", "Separa as folhas da bandeja multiuso durante a alimentação."],
+    [/mp.*roller|multi.?purpose.*roller/, "Rolo de alimentação — bandeja multiuso", "Puxa papel da bandeja multiuso para dentro da impressora."],
+  ];
+  const match = known.find(([pattern]) => pattern.test(normalized));
+  return match
+    ? [match[1], match[2], level]
+    : [cleaned || "Suprimento da impressora", "Componente reportado pela impressora via Printer-MIB.", level];
+}
+
 const SYSTEM_OIDS: [string, string][] = [
   ["1.3.6.1.2.1.1.5.0", "Nome (sysName)"],
   ["1.3.6.1.2.1.1.1.0", "Descrição (sysDescr)"],
@@ -405,10 +438,10 @@ export async function snmpQuery(target: SnmpTarget, mode: SnmpMode, oid?: string
         { oid: "1.3.6.1.2.1.43.11.1.1.9" },
       ]);
       return {
-        columns: ["Suprimento", "Nível"],
+        columns: ["Componente", "Descrição", "Nível restante"],
         rows: Array.from(table.values(), ([desc, max, level]) => {
           const pct = Number(max) > 0 && Number(level) >= 0 ? `${Math.round((Number(level) / Number(max)) * 100)}%` : level;
-          return [desc, pct];
+          return formatPrinterSupply(desc, pct);
         }),
       };
     }

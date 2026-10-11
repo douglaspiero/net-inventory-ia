@@ -5,7 +5,8 @@
   <name>NetInventory</name>
   <description>Inventário e monitoramento da rede local (painel web na porta configurada, padrão 3000).</description>
   <executable>%BASE%\node\node.exe</executable>
-  <arguments>"%BASE%\launcher.cjs"</arguments>
+  <!-- DES legado da Printer-MIB SNMPv3 requer o provider OpenSSL legado; AES continua preferível. -->
+  <arguments>--openssl-legacy-provider "%BASE%\launcher.cjs"</arguments>
   <workingdirectory>%BASE%</workingdirectory>
   <startmode>Automatic</startmode>
   <delayedAutoStart>true</delayedAutoStart>

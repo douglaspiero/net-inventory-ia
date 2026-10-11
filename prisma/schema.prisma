@@ -202,6 +202,8 @@ model Equipment {
   snmpUsername      String?
   snmpAuthPassword  String?
   snmpAuthProtocol  String?
+    snmpPrivPassword  String?
+    snmpPrivProtocol  String?
   notes       String?
   /// Leitura automática na página de Equipamentos (minutos); null = desligada.
   pollIntervalMinutes Int?

@@ -253,16 +253,20 @@ export function EquipmentStatusPanel({
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-base">Suprimentos</CardTitle>
-            <CardDescription>Níveis reportados pela impressora via Printer-MIB.</CardDescription>
+            <CardDescription>Consumíveis e peças de manutenção identificados pela impressora.</CardDescription>
           </CardHeader>
           <CardContent>
             <Table>
               <TableHeader>
-                <TableRow><TableHead>Suprimento</TableHead><TableHead>Nível</TableHead></TableRow>
+                <TableRow><TableHead>Componente</TableHead><TableHead>Descrição</TableHead><TableHead>Nível restante</TableHead></TableRow>
               </TableHeader>
               <TableBody>
-                {data.printerSupplies.map(([name, level], index) => (
-                  <TableRow key={`${name}-${index}`}><TableCell>{name || `Suprimento ${index + 1}`}</TableCell><TableCell className="font-mono">{level || "—"}</TableCell></TableRow>
+                {data.printerSupplies.map((supply, index) => (
+                  <TableRow key={`${supply.name}-${index}`}>
+                    <TableCell className="font-medium">{supply.name || `Componente ${index + 1}`}</TableCell>
+                    <TableCell className="text-muted-foreground">{supply.description}</TableCell>
+                    <TableCell className="font-mono tabular-nums">{supply.level || "—"}</TableCell>
+                  </TableRow>
                 ))}
               </TableBody>
             </Table>
